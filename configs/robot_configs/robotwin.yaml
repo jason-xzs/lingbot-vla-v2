@@ -46,4 +46,4 @@ images:
   - observation.images.camera_wrist_right: 
       origin_keys: observation.images.cam_right_wrist
 
-norm_stats: assets/norm_stats/robotwin.json
+norm_stats: assets/norm_stats/robotwin_clean.json

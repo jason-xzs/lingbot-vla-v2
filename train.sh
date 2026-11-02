@@ -9,6 +9,11 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_DISABLE_TELEMETRY=1 
 export DISABLE_TELEMETRY=1 
 
+TRITON_BUNDLED_PTXAS=$(python -c 'from pathlib import Path; import triton; print(Path(triton.__file__).parent / "backends/nvidia/bin/ptxas")')
+if [[ -x "$TRITON_BUNDLED_PTXAS" ]]; then
+  export TRITON_PTXAS_PATH="$TRITON_BUNDLED_PTXAS"
+fi
+
 if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
   NPROC_PER_NODE=$(nvidia-smi -L | wc -l)
 else

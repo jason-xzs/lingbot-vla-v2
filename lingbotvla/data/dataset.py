@@ -78,6 +78,7 @@ def build_vla_dataset(
     return_item = False,
     disabled_image_features = False,
     use_depth_align = False,
+    allow_augmentation = False,
 ) -> "Dataset":
     if model_config is None: assert processor is None, "processor and model_config can only be None when computing norm"
     data_name = dataset_config.data_name
@@ -105,7 +106,8 @@ def build_vla_dataset(
             return_item=return_item,
             image_augment=image_augment,
             use_depth_align=use_depth_align,
-            use_future_image=use_future_image
+            use_future_image=use_future_image,
+            allow_augmentation=allow_augmentation,
         )
     else:
         dataset = VLADataset(
@@ -122,7 +124,8 @@ def build_vla_dataset(
             disabled_image_features=disabled_image_features,
             image_augment=image_augment,
             use_depth_align=use_depth_align,
-            use_future_image=use_future_image
+            use_future_image=use_future_image,
+            allow_augmentation=allow_augmentation,
         )
 
     return dataset

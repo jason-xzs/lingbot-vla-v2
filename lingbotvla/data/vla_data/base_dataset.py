@@ -35,6 +35,7 @@ except ImportError:
 from datasets import load_dataset as _hf_load_dataset
 
 from ...utils import logging
+from .augmentation import AugmentationIndex, AugmentationSettings, DatasetAugmenter, preprocessing_signature
 from .utils import FeatureTransform
 from .video_utils import decode_video_frames
 
@@ -73,10 +74,12 @@ class LeRobotDataset(BaseLeRobotDataset):
         self,
         repo_id: str,
         load_image: bool = True,
+        export_query_indices: bool = False,
         **kwargs,
     ):
         super().__init__(repo_id, **kwargs)
         self.load_image = load_image
+        self.export_query_indices = export_query_indices
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         """
@@ -147,6 +150,23 @@ class LeRobotDataset(BaseLeRobotDataset):
         task_idx = item["task_index"].item()
         item["task"] = _get_task_name(self.meta.tasks, task_idx)
 
+        if self.export_query_indices:
+            if LEROBOT_DATASET_API == "v3":
+                episode = self.meta.episodes[ep_idx]
+                episode_start, episode_end = int(episode["dataset_from_index"]), int(episode["dataset_to_index"])
+            else:
+                episode_start = int(self.episode_data_index["from"][ep_idx])
+                episode_end = int(self.episode_data_index["to"][ep_idx])
+            anchor = int(item["frame_index"])
+            item["_augmentation_meta"] = {
+                "episode_length": episode_end - episode_start,
+                "actual_query_frame_indices": {
+                    camera: [int(index) - episode_start for index in query_indices[camera]]
+                    if query_indices is not None and camera in query_indices else [anchor]
+                    for camera in self.meta.camera_keys
+                },
+            }
+
         return item
 
 class VLADataset(Dataset):
@@ -169,6 +189,7 @@ class VLADataset(Dataset):
         image_augment = False,
         use_depth_align = False,
         use_future_image = False,
+        allow_augmentation = False,
     ):
         if do_nomalize and config is None:
             raise ValueError("VLADataset requires a model config; pass model.config via build_vla_dataset.")
@@ -180,6 +201,15 @@ class VLADataset(Dataset):
         self.disabled_image_features = disabled_image_features
         self.use_depth_align = use_depth_align
         self.use_future_image = use_future_image
+        self.allow_augmentation = allow_augmentation and do_nomalize and not disabled_image_features and not return_item
+        self.augmentation_settings = AugmentationSettings.from_config(
+            getattr(dataset_config, "mixed_augmentation", None),
+            getattr(dataset_config, "instruction_sampling", None),
+            image_augment,
+        ) if self.allow_augmentation else AugmentationSettings()
+        self.augmentation_enabled = self.augmentation_settings.enabled
+        self.augmenter = None
+        self._augmentation_visit = 0
 
         load_image = True if do_nomalize else False
 
@@ -189,7 +219,7 @@ class VLADataset(Dataset):
                         processor, disabled_image_features, do_nomalize, \
                         chunk_size=chunk_size, return_item_befor_padding=return_item,\
                         image_augment=image_augment, use_depth_align=use_depth_align,
-                        use_future_image=use_future_image)
+                        use_future_image=use_future_image, allow_augmentation=self.allow_augmentation)
         else:
             self.feature_transform = feature_transform
 
@@ -209,8 +239,21 @@ class VLADataset(Dataset):
             repo_id=repo_id,
             image_transforms=Resize(image_size),
             delta_timestamps=merged_delta,
-            load_image=load_image
+            load_image=load_image,
+            export_query_indices=self.augmentation_enabled,
         )
+
+        if self.augmentation_enabled:
+            if not self.feature_transform.allow_augmentation:
+                raise ValueError("Shared FeatureTransform must explicitly allow training augmentation")
+            camera_sources = {camera: self.feature_transform.key_mapping[camera]["origin_keys"]
+                              for camera in self.image_features}
+            episode_lengths = [int(self.dataset_meta.episodes[episode]["length"])
+                               for episode in range(self.dataset_meta.total_episodes)]
+            self.augmenter = DatasetAugmenter(
+                self.augmentation_settings, self.dataset.root, camera_sources, episode_lengths,
+                preprocessing_signature(self.dataset.video_backend, image_size),
+            )
 
         self.return_item = return_item
         self.transform = transform
@@ -266,6 +309,13 @@ class VLADataset(Dataset):
         return item
 
     def getitem(self, idx):
+        if isinstance(idx, AugmentationIndex):
+            access = idx
+            idx = access.index
+        else:
+            access = AugmentationIndex(int(idx), position=self._augmentation_visit)
+            if self.augmentation_enabled:
+                self._augmentation_visit += 1
         raw_item = self.check_lerobot_item(self.dataset[idx])
         if (
             self.use_future_image
@@ -276,7 +326,8 @@ class VLADataset(Dataset):
                 float(self.dataset_meta.fps) / float(max(1, self.chunk_size - 1)),
                 dtype=torch.float32,
             )
-        item = self.feature_transform.apply(raw_item)
+        augmentation = self.augmenter.sample(raw_item, access) if self.augmenter is not None else None
+        item = self.feature_transform.apply(raw_item, augmentation=augmentation)
         if self.transform is not None:
             item = self.transform(item, raw_item, self.feature_transform.feature_config.images, self.feature_transform.key_mapping)
         return item

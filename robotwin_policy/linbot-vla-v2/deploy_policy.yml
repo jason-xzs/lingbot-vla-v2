@@ -1,0 +1,13 @@
+policy_name: linbot-vla-v2
+task_name: null
+task_config: demo_clean
+ckpt_setting: robotwin_clean_step50000
+seed: 0
+instruction_type: unseen
+test_num: 100
+
+# Model inference runs separately in the lingbotvla environment.
+host: 127.0.0.1
+port: 8006
+connect_timeout: 30
+request_timeout: 300

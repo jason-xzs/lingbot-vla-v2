@@ -225,19 +225,21 @@ def _visual_hw(visual: Tensor) -> tuple[int, int]:
 
 def sample_visual_augmentation_params(
     reference: Tensor,
+    generator: torch.Generator | None = None,
 ) -> dict:
     """Sample one replayable augmentation config for all views/frames in a sample."""
     _visual_hw(reference)
     device = reference.device
     return {
-        "brightness": 0.7 + torch.rand((), device=device) * 0.6,
-        "contrast": 0.6 + torch.rand((), device=device) * 0.8,
-        "saturation": 0.5 + torch.rand((), device=device),
+        "brightness": 0.7 + torch.rand((), device=device, generator=generator) * 0.6,
+        "contrast": 0.6 + torch.rand((), device=device, generator=generator) * 0.8,
+        "saturation": 0.5 + torch.rand((), device=device, generator=generator),
     }
 
 def apply_visual_augmentation(
     visual: Tensor,
     params: dict,
+    metrics: dict | None = None,
 ) -> Tensor:
     """Apply the same sampled crop/rotate/color params to an image or video clip.
 
@@ -257,7 +259,7 @@ def apply_visual_augmentation(
     orig_dtype = visual.dtype
     height, width = int(visual_bchw.shape[-2]), int(visual_bchw.shape[-1])
     image = visual_bchw.to(torch.float32)
-    if image.max() > 1.0:
+    if orig_dtype == torch.uint8 or image.max() > 1.0:
         image = image / 255.0
 
     brightness = params["brightness"].to(device=image.device, dtype=image.dtype)
@@ -268,6 +270,10 @@ def apply_visual_augmentation(
     image = (image - mean) * contrast + mean
     gray = image.mean(dim=1, keepdim=True)
     image = gray + (image - gray) * saturation
+    if metrics is not None:
+        if not torch.isfinite(image).all():
+            raise ValueError("Color augmentation produced nonfinite values")
+        metrics.update(clip_low=float((image < 0).float().mean()), clip_high=float((image > 1).float().mean()))
     image = image.clamp(0.0, 1.0)
 
     if orig_dtype == torch.uint8:

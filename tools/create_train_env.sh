@@ -8,6 +8,7 @@ ENV_NAME="lingbotvla"
 RECREATE=0
 RESUME=0
 FLASH_ATTN_WHEEL="${FLASH_ATTN_WHEEL:-}"
+FLASH_ATTN_INDEX_URL="${FLASH_ATTN_INDEX_URL:-https://pypi.org/simple}"
 
 usage() {
   cat <<'USAGE'
@@ -16,7 +17,8 @@ Usage: bash tools/create_train_env.sh [--env-name NAME] [--recreate] [--resume] 
 Creates a clean Python 3.12 conda environment for lingbotvla training.
 Depth dependencies and local depth packages are always installed.
 If --flash-attn-wheel or FLASH_ATTN_WHEEL is provided, flash-attn is installed
-from that wheel. Otherwise flash-attn==2.8.3 is installed from pip.
+from that wheel. Otherwise flash-attn==2.8.3 is installed from official PyPI.
+Set FLASH_ATTN_INDEX_URL to use another package index for flash-attn.
 Use --resume to continue installing into an existing environment.
 USAGE
 }
@@ -121,7 +123,7 @@ if [[ -n "${FLASH_ATTN_WHEEL}" ]]; then
   fi
   python -m pip install --no-deps "${FLASH_ATTN_WHEEL}"
 else
-  python -m pip install --no-build-isolation flash-attn==2.8.3
+  python -m pip install --index-url "${FLASH_ATTN_INDEX_URL}" --no-build-isolation flash-attn==2.8.3
 fi
 assert_torch_stack
 python - <<PY

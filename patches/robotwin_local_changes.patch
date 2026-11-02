@@ -1,0 +1,154 @@
+diff --git a/envs/_base_task.py b/envs/_base_task.py
+--- a/envs/_base_task.py
++++ b/envs/_base_task.py
+@@ -98,6 +98,12 @@
+         self.now_obs = {}
+         self.take_action_cnt = 0
+         self.eval_video_path = kwags.get("eval_video_save_dir", None)
++        self.eval_video_fps = float(kwags.get("eval_video_fps", 60))
++        if self.eval_video_path is not None and (
++            not math.isfinite(self.eval_video_fps)
++            or not 0 < self.eval_video_fps <= 1 / self.scene.get_timestep()
++        ):
++            raise ValueError("eval_video_fps must be positive, finite, and not exceed the simulation frequency")
+ 
+         self.save_freq = kwags.get("save_freq")
+         self.world_pcd = None
+@@ -574,6 +580,25 @@
+ 
+     def _set_eval_video_ffmpeg(self, ffmpeg):
+         self.eval_video_ffmpeg = ffmpeg
++        self._eval_video_time = 0.0
++        self._eval_video_frame_count = 0
++        self._eval_video_last_frame_time = None
++
++    def _record_eval_video_frame(self, timestep=0.0, force=False):
++        if self.eval_video_path is None:
++            return
++
++        self._eval_video_time += timestep
++        if self._eval_video_last_frame_time == self._eval_video_time:
++            return
++        if not force and self._eval_video_time + 1e-9 < self._eval_video_frame_count / self.eval_video_fps:
++            return
++
++        self.cameras.update_picture()
++        frame = self.cameras.get_rgb()["head_camera"]["rgb"]
++        self.eval_video_ffmpeg.stdin.write(frame.tobytes())
++        self._eval_video_frame_count += 1
++        self._eval_video_last_frame_time = self._eval_video_time
+ 
+     def close_env(self, clear_cache=False):
+         if clear_cache:
+@@ -584,6 +609,7 @@
+ 
+     def _del_eval_video_ffmpeg(self):
+         if self.eval_video_ffmpeg:
++            self._record_eval_video_frame(force=True)
+             self.eval_video_ffmpeg.stdin.close()
+             self.eval_video_ffmpeg.wait()
+             del self.eval_video_ffmpeg
+@@ -1480,9 +1506,7 @@
+         if self.take_action_cnt == self.step_lim or self.eval_success:
+             return
+ 
+-        eval_video_freq = 1  # fixed
+-        if (self.eval_video_path is not None and self.take_action_cnt % eval_video_freq == 0):
+-            self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
++        self._record_eval_video_frame()
+ 
+         self.take_action_cnt += 1
+         print(f"step: \033[92m{self.take_action_cnt} / {self.step_lim}\033[0m", end="\r")
+@@ -1653,12 +1677,12 @@
+ 
+             self.scene.step()
+             self._update_render()
++            self._record_eval_video_frame(self.scene.get_timestep())
+                 
+             if self.check_success():
+                 self.eval_success = True
+                 self.get_obs() # update obs
+-                if (self.eval_video_path is not None):
+-                    self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
++                self._record_eval_video_frame(force=True)
+                 return
+ 
+         self._update_render()
+diff --git a/script/eval_policy.py b/script/eval_policy.py
+--- a/script/eval_policy.py
++++ b/script/eval_policy.py
+@@ -81,6 +81,7 @@
+     args['task_name'] = task_name
+     args["task_config"] = task_config
+     args["ckpt_setting"] = ckpt_setting
++    args["eval_video_fps"] = usr_args.get("eval_video_fps", args.get("eval_video_fps", 60))
+ 
+     embodiment_type = args.get("embodiment")
+     embodiment_config_path = os.path.join(CONFIGS_PATH, "_embodiment_config.yml")
+@@ -159,7 +160,9 @@
+ 
+     st_seed = 100000 * (1 + seed)
+     suc_nums = []
+-    test_num = 100
++    test_num = int(usr_args.get("test_num", 100))
++    if test_num <= 0:
++        raise ValueError("test_num must be a positive integer")
+     topk = 1
+ 
+     model = get_model(usr_args)
+@@ -273,7 +276,7 @@
+                     "-video_size",
+                     video_size,
+                     "-framerate",
+-                    "10",
++                    str(TASK_ENV.eval_video_fps),
+                     "-i",
+                     "-",
+                     "-pix_fmt",
+diff --git a/script/eval_policy_client.py b/script/eval_policy_client.py
+--- a/script/eval_policy_client.py
++++ b/script/eval_policy_client.py
+@@ -248,6 +248,7 @@
+     args['task_name'] = task_name
+     args["task_config"] = task_config
+     args["ckpt_setting"] = ckpt_setting
++    args["eval_video_fps"] = usr_args.get("eval_video_fps", args.get("eval_video_fps", 60))
+ 
+     embodiment_type = args.get("embodiment")
+     embodiment_config_path = os.path.join(CONFIGS_PATH, "_embodiment_config.yml")
+@@ -442,7 +443,7 @@
+                     "-video_size",
+                     video_size,
+                     "-framerate",
+-                    "10",
++                    str(TASK_ENV.eval_video_fps),
+                     "-i",
+                     "-",
+                     "-pix_fmt",
+diff --git a/task_config/_config_template.yml b/task_config/_config_template.yml
+--- a/task_config/_config_template.yml
++++ b/task_config/_config_template.yml
+@@ -32,4 +32,4 @@
+ save_path: ./data
+ clear_cache_freq: 1
+ collect_data: true
+-eval_video_log: true
++eval_video_log: false
+diff --git a/task_config/demo_clean.yml b/task_config/demo_clean.yml
+--- a/task_config/demo_clean.yml
++++ b/task_config/demo_clean.yml
+@@ -34,4 +34,4 @@
+ save_path: ./data
+ clear_cache_freq: 5
+ collect_data: true
+-eval_video_log: true
++eval_video_log: false
+diff --git a/task_config/demo_randomized.yml b/task_config/demo_randomized.yml
+--- a/task_config/demo_randomized.yml
++++ b/task_config/demo_randomized.yml
+@@ -34,4 +34,4 @@
+ save_path: ./data
+ clear_cache_freq: 5
+ collect_data: true
+-eval_video_log: true
++eval_video_log: false

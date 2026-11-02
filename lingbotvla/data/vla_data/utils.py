@@ -77,7 +77,8 @@ class FeatureTransform:
         norm_stats_path=None,
         use_depth_align=False,
         image_augment=False,
-        use_future_image=False,):
+        use_future_image=False,
+        allow_augmentation=False,):
 
         assert os.path.exists(robot_config_path), f"{robot_config_path} does not exist."
         with open(robot_config_path, 'r') as f:
@@ -107,6 +108,7 @@ class FeatureTransform:
         self.disabled_image_features = disabled_image_features
         self.use_depth_align = use_depth_align
         self.use_future_image = use_future_image
+        self.allow_augmentation = allow_augmentation
 
         if not disabled_image_features:
             self.image_augment = image_augment
@@ -372,7 +374,11 @@ class FeatureTransform:
         return out_item
 
 
-    def apply(self, item, policy_eval=False):
+    def apply(self, item, policy_eval=False, augmentation=None):
+        if not self.allow_augmentation or policy_eval:
+            augmentation = None
+        if augmentation is not None and augmentation.instruction is not None:
+            item = {**item, "task": augmentation.instruction}
         w_action = not policy_eval
         if w_action:
             item['action_is_pad'] = item[f"{self.org_features['actions'][0]}_is_pad"] if not len(self.actions_convert_from_state)>0 else item[f"{self.org_features['states'][0]}_is_pad"][1:]
@@ -404,6 +410,9 @@ class FeatureTransform:
             return item
 
         batch_dict = self.pad_and_concat(item, w_action)
+        mixed_images = augmentation is not None and augmentation.engine.settings.image_enabled
+        if mixed_images and not self.disabled_image_features:
+            augmentation.apply_batch(batch_dict)
 
         state = prepare_state(batch_dict, self.model_config.max_state_dim) 
         actions = prepare_action(batch_dict, self.model_config.max_action_dim)
@@ -419,7 +428,7 @@ class FeatureTransform:
                 self.processor.image_processor,
                 batch_dict,
                 image_keys=self.feature_config.images,
-                train=self.image_augment and not policy_eval,
+                train=self.image_augment and not policy_eval and not mixed_images,
                 use_depth_align=self.use_depth_align,
                 return_image_grid_thw=return_image_grid_thw,
                 return_augment_params=True,
@@ -429,7 +438,7 @@ class FeatureTransform:
                 future_images, _, future_pil_images, _ = prepare_images(
                     self.processor.image_processor, future_obs,
                     image_keys=self.feature_config.images,
-                    train=self.image_augment and not policy_eval,
+                    train=self.image_augment and not policy_eval and not mixed_images,
                     use_depth_align=self.use_depth_align,
                     return_image_grid_thw=False,
                     augment_params=image_augment_params,

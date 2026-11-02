@@ -439,7 +439,7 @@ def main():
     if args.data.dataloader_type == "native":
         if args.data.datasets_type == 'vla':
             args.data.chunk_size = args.train.chunk_size
-            train_dataset = build_vla_dataset(dataset_config=args.data, model_config=args.model, config=model.config, processor=processor, use_depth_align=use_depth_align)
+            train_dataset = build_vla_dataset(dataset_config=args.data, model_config=args.model, config=model.config, processor=processor, use_depth_align=use_depth_align, allow_augmentation=True)
             args.train.compute_train_steps(args.data.max_seq_len, args.data.train_size, len(train_dataset))
         
         train_dataloader = build_dataloader(

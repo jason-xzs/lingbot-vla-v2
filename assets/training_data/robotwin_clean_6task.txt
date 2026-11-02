@@ -1,0 +1,6 @@
+robotwin data/lerobot_clean/handover_mic
+robotwin data/lerobot_clean/hanging_mug
+robotwin data/lerobot_clean/move_can_pot
+robotwin data/lerobot_clean/place_mouse_pad
+robotwin data/lerobot_clean/put_object_cabinet
+robotwin data/lerobot_clean/scan_object

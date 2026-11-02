@@ -9,7 +9,8 @@ model:
 data:
   datasets_type: vla
   data_name: multi
-  train_path: assets/training_data/robotwin.txt
+  train_path: assets/training_data/robotwin_clean.txt
+  norm_stats_file: assets/norm_stats/robotwin_clean.json
   robot_config_root: ./configs/robot_configs
   joints:
     - arm.position: 14

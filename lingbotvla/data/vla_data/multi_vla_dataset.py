@@ -1,4 +1,5 @@
 from typing import Callable
+from dataclasses import replace
 import numpy as np
 from lingbotvla.utils import helper
 import torch
@@ -12,6 +13,7 @@ from tqdm import tqdm
 
 from torch.utils.data import Dataset
 from .base_dataset import VLADataset
+from .augmentation import AugmentationDataError, AugmentationIndex
 
 logger = helper.create_logger(__name__)
 
@@ -60,6 +62,7 @@ class MultiVLADataset(Dataset):
         image_augment = False,
         use_depth_align=False,
         use_future_image=False,
+        allow_augmentation=False,
     ):
         
         self.config = config
@@ -96,12 +99,19 @@ class MultiVLADataset(Dataset):
                     image_augment = image_augment,
                     use_depth_align = use_depth_align,
                     use_future_image=use_future_image,
+                    allow_augmentation=allow_augmentation,
                 )
             if self.data_names[i] not in self.feature_transforms:
                 self.feature_transforms[self.data_names[i]] = dataset.feature_transform
             _datasets.append(dataset)
 
         self._datasets = _datasets
+        self.augmentation_enabled = any(dataset.augmentation_enabled for dataset in _datasets)
+        self._augmentation_visit = 0
+        if self.augmentation_enabled:
+            guarded = [dataset.augmenter.task for dataset in _datasets
+                       if dataset.augmenter is not None and dataset.augmenter.guarded]
+            logger.info(f"Mixed augmentation protected training tasks: {guarded}")
 
         dataset_start_index = []
         start_index = 0
@@ -126,13 +136,17 @@ class MultiVLADataset(Dataset):
         return self.num_frames
 
     def getdata(self, idx: int) -> dict[str, torch.Tensor]:
+        access = idx if isinstance(idx, AugmentationIndex) else None
+        if access is not None:
+            idx = access.index
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of bounds.")
         # Determine which dataset to get an item from based on the index.
         dataset_idx = np.searchsorted(self.dataset_start_index,  np.array([idx]), side='right') - 1
         dataset_idx = dataset_idx[0]
         dataset = self._datasets[dataset_idx]
-        item = dataset.getitem(idx - self.dataset_start_index[dataset_idx])
+        local_index = int(idx - self.dataset_start_index[dataset_idx])
+        item = dataset.getitem(replace(access, index=local_index) if access is not None else local_index)
 
         if isinstance(item, list):
             if len(item) != 1:
@@ -144,7 +158,12 @@ class MultiVLADataset(Dataset):
         return item
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-
+        access = idx if isinstance(idx, AugmentationIndex) else None
+        if access is not None:
+            idx = access.index
+        elif self.augmentation_enabled:
+            access = AugmentationIndex(int(idx), position=self._augmentation_visit)
+            self._augmentation_visit += 1
         if idx < 0 or idx >= len(self):
             raise IndexError(f"Index {idx} out of bounds.")
         max_retries = 200
@@ -154,7 +173,9 @@ class MultiVLADataset(Dataset):
         #return self.getdata(cur)
         while attempts < max_retries:
             try:
-                return self.getdata(cur)
+                return self.getdata(replace(access, index=int(cur)) if access is not None else cur)
+            except AugmentationDataError:
+                raise
             except Exception as e:
                 last_err = e
                 attempts += 1

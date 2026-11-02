@@ -1,0 +1,4 @@
+# These packages already exist in the local RoboTwin environment.
+numpy<2
+msgpack>=1.0
+websocket-client>=1.6

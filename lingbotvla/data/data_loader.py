@@ -33,6 +33,7 @@ from .data_collator import (
     UnpackDataCollator,
 )
 from .dynamic_batching import DynamicBatchSizeDataLoader
+from .vla_data.augmentation import AugmentationSampler
 
 
 if TYPE_CHECKING:
@@ -136,7 +137,7 @@ class DistributedDataloader(StatefulDataLoader):
     def set_epoch(self, epoch: int) -> None:
         if self.sampler is not None and hasattr(self.sampler, "set_epoch"):
             self.sampler.set_epoch(epoch)
-        elif hasattr(self.dataset, "set_epoch"):
+        if hasattr(self.dataset, "set_epoch"):
             self.dataset.set_epoch(epoch)
 
 
@@ -213,6 +214,8 @@ def build_dataloader(
             shuffle=True,
             seed=seed,
         )
+        if getattr(dataset, "augmentation_enabled", False):
+            sampler = AugmentationSampler(sampler)
 
     dataloader = DistributedDataloader(
         dataset,

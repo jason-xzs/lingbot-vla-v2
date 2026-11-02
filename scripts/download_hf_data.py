@@ -13,15 +13,18 @@ if __name__ == "__main__":
     parser.add_argument("--repo_id", type=str, default="HuggingFaceFW/fineweb")
     parser.add_argument("--local_dir", type=str, default="./fineweb/")
     parser.add_argument("--allow_patterns", type=str, default=None)
+    parser.add_argument("--revision", type=str, default=None)
     args = parser.parse_args()
 
     repo_id = args.repo_id
     local_dir = args.local_dir
     allow_patterns = args.allow_patterns
+    revision = args.revision
 
     folder = snapshot_download(
         repo_id,
         repo_type="dataset",
         local_dir=local_dir,
         allow_patterns=allow_patterns,
+        revision=revision,
     )

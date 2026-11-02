@@ -240,7 +240,20 @@ class DataArguments:
             )
         },
     )
+    mixed_augmentation: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"help": "Training-only mixed image augmentation recipe.", "strict_json": True},
+    )
+    instruction_sampling: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"help": "Training-only episode seen instruction sampling.", "strict_json": True},
+    )
+
     def __post_init__(self):
+        if self.mixed_augmentation or self.instruction_sampling:
+            from ..data.vla_data.augmentation import AugmentationSettings
+
+            AugmentationSettings.from_config(self.mixed_augmentation, self.instruction_sampling, self.image_augment)
         if self.text_keys is None:
             if self.data_type == "plaintext":
                 self.text_keys = "content_split"
@@ -861,6 +874,7 @@ def parse_args(rootclass: T) -> T:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     base_to_subclass = {}
     dict_fields = set()
+    strict_dict_fields = set()
     list_fields = set()
     for subclass in fields(rootclass):
         base = subclass.name
@@ -890,6 +904,8 @@ def parse_args(rootclass: T) -> T:
                     origin_type = getattr(attr_type, "__origin__", attr_type)
 
             parser_kwargs = attr.metadata.copy()
+            if parser_kwargs.pop("strict_json", False):
+                strict_dict_fields.add(f"{base}.{attr.name}")
             if origin_type is Literal or (isinstance(attr_type, type) and issubclass(attr_type, Enum)):
                 if origin_type is Literal:
                     parser_kwargs["choices"] = attr_type.__args__
@@ -973,7 +989,9 @@ def parse_args(rootclass: T) -> T:
     for key, value in vars(args).items():
         if key in dict_fields:
             if isinstance(value, str) and value.startswith("{"):
-                value = _convert_str_dict(json.loads(value))
+                value = json.loads(value)
+                if key not in strict_dict_fields:
+                    value = _convert_str_dict(value)
             else:
                 raise ValueError(f"Expect a json string for dict argument, but got {value}")
 
